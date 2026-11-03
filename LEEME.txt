@@ -1,0 +1,26 @@
+MY LIFE APP — VERSION PWA (v180) — ICONOS SUELTOS, SIN CARPETA
+==============================================================
+Todos los archivos van en la RAIZ del repositorio (no hay carpetas):
+  index.html                 la app
+  sw.js                      guarda la app en el telefono para que abra sin internet
+  manifest.webmanifest       datos para instalarla como app (nombre, iconos)
+  icon-192.png, icon-512.png, icon-maskable-512.png    iconos
+
+Si ya subiste los iconos sueltos, solo vuelve a subir (reemplazando):
+  index.html, sw.js y manifest.webmanifest
+
+PASOS PARA PUBLICAR
+  1. Repositorio mylife-app (Public) -> "uploading an existing file" -> arrastra los
+     archivos -> Commit changes (Commit directly to the main branch).
+  2. Settings -> Pages -> Deploy from a branch -> main, "/ (root)" -> Save.
+  3. Custom domain: app.proyectopasivo.com -> Save.
+  4. En el DNS de proyectopasivo.com: registro CNAME, nombre "app",
+     apunta a proyectopasivo2026.github.io
+  5. Cuando GitHub verifique el DNS, marcar "Enforce HTTPS".
+  6. En el celular: abrir https://app.proyectopasivo.com en Chrome, con internet ->
+     menu (3 puntos) -> "Instalar app". Iniciar sesion con Google.
+  7. Probar sin internet: cerrar la app, modo avion, abrirla desde el icono.
+
+PARA ACTUALIZAR LA APP A FUTURO
+  Reemplaza index.html en GitHub; los telefonos lo descargan solos
+  la proxima vez que abran la app con internet.
