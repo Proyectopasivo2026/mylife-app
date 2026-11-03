@@ -9070,6 +9070,22 @@ function updateSidebarUserInfo(isOffline) {
   `;
 }
 
+// Texto de estado en el menú lateral: informa sin molestar
+function refreshSyncStatusPill() {
+  const t = document.getElementById('syncStatusText');
+  if (!t) return;
+  const offline = (typeof navigator !== 'undefined' && navigator.onLine === false);
+  const pend = (typeof _hasPendingChanges !== 'undefined') && _hasPendingChanges;
+  t.textContent = offline
+    ? (pend ? 'Sin conexión — cambios guardados, se subirán al reconectar' : 'Sin conexión — se sincronizará al reconectar')
+    : (pend ? 'Sincronizando…' : 'Sincronizado');
+  const dot = document.getElementById('syncIndicatorDot');
+  if (dot) { dot.style.background = offline ? 'var(--text3)' : ''; dot.style.animation = offline ? 'none' : ''; }
+}
+window.addEventListener('online', refreshSyncStatusPill);
+window.addEventListener('offline', refreshSyncStatusPill);
+setInterval(refreshSyncStatusPill, 3000);
+
 // ---- Google Drive: empaquetar/desempaquetar TODAS las claves de v152 ----
 function packAllDataForDrive() {
   const packed = {};
@@ -9207,8 +9223,8 @@ async function loadFromDriveIntoApp() {
       await saveAllDataToDrive();
     }
   } catch (err) {
-    console.error('Error cargando desde Drive:', err);
-    showSyncErrorPanel(err.message || String(err));
+    console.warn('No se pudo cargar desde Drive:', err);
+    reportSyncError(err, false);
   }
 }
 
@@ -9217,12 +9233,17 @@ async function loadFromDriveIntoApp() {
 // la última vez que la sabíamos, ahí sí trae los datos nuevos y refresca
 // la pantalla — esto es lo que permite ver en la PC, en segundos, lo que
 // se agregó desde el celular (y viceversa).
+let _retryingPending = false;
 async function checkForRemoteChanges() {
   try {
+    // Sin conexión no hay nada que revisar ni subir: se reintenta solo al volver la señal.
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
     // Mismo criterio que en loadFromDriveIntoApp(): nunca traer y
     // sobrescribir con Drive mientras haya cambios locales sin subir.
     if (_hasPendingChanges) {
-      await saveAllDataToDrive();
+      if (_retryingPending) return; // ya hay un reintento en curso
+      _retryingPending = true;
+      try { await saveAllDataToDrive(); } finally { _retryingPending = false; }
       return;
     }
     await ensureValidToken();
@@ -9299,9 +9320,8 @@ async function saveAllDataToDrive() {
     // manualmente antes de actualizar.
     maybeCreateDailyBackup(fileContent).catch(() => {});
   } catch (err) {
-    console.error('❌ Error guardando en Drive:', err);
-    if (typeof toast === 'function') toast('⚠️ No se pudo sincronizar con Drive — se reintentará');
-    showSyncErrorPanel(err.message || String(err));
+    console.warn('No se pudo guardar en Drive:', err);
+    reportSyncError(err, true);
   }
 }
 
@@ -9368,6 +9388,31 @@ async function maybeCreateDailyBackup(fileContent) {
 
 // Panel de diagnóstico visible en pantalla — muestra el error técnico
 // real para poder leerlo/fotografiarlo sin necesitar cable ni consola.
+// ¿El error es solo falta de conexión? (sin señal, modo avión, tiempo agotado)
+// En ese caso NO se avisa con carteles: los datos están a salvo en el
+// dispositivo y se suben solos al volver la señal. El aviso rojo queda solo
+// para problemas reales (permisos, Drive con error, etc.).
+function isNetworkError(err) {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+  const msg = String((err && err.message) || err || '');
+  return (err && err.name === 'AbortError') ||
+    /failed to fetch|networkerror|network request failed|load failed|network error|err_internet|timeout/i.test(msg);
+}
+
+// Evita repetir el aviso rojo cada 5 segundos si un problema real persiste
+let _lastSyncErrorAt = 0;
+function reportSyncError(err, withToast) {
+  if (isNetworkError(err)) {
+    console.warn('Sin conexión con Drive: los cambios quedan pendientes y se subirán al reconectar.');
+    return;
+  }
+  const now = Date.now();
+  if (now - _lastSyncErrorAt < 60000) return; // máximo un aviso por minuto
+  _lastSyncErrorAt = now;
+  if (withToast && typeof toast === 'function') toast('⚠️ No se pudo sincronizar con Drive — se reintentará');
+  showSyncErrorPanel((err && err.message) || String(err));
+}
+
 function showSyncErrorPanel(message) {
   let panel = document.getElementById('syncErrorPanel');
   if (!panel) {
