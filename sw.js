@@ -16,7 +16,7 @@
  * Cambia CACHE_VERSION solo si cambias íconos, manifest o recursos externos,
  * para que los teléfonos descarten la copia guardada anterior.
  */
-const CACHE_VERSION = 'mylifeapp-pwa-v180';
+const CACHE_VERSION = 'mylifeapp-pwa-v181';
 
 const INDEX_URL = new URL('./index.html', self.registration.scope).href;
 
