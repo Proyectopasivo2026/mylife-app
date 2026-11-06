@@ -1,6 +1,6 @@
 {
-  "name": "My Life App",
-  "short_name": "MyLife",
+  "name": "MylifeApp",
+  "short_name": "MylifeApp",
   "description": "Clientes, ventas, seguimientos y más — funciona sin internet y se sincroniza con tu Google Drive.",
   "lang": "es",
   "start_url": "./",

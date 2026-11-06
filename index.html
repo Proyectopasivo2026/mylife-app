@@ -2796,6 +2796,28 @@
   </div>
 </div>
 
+<!-- WHATSAPP OPTION MODAL (tipo de software / duración) -->
+<div class="modal-overlay" id="waOptionModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="waOptionTitle">Opciones</div>
+      <button class="modal-close" onclick="closeModal('waOptionModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label" id="waOptionLabel">Nombre</label>
+        <input class="form-input" id="waOptionName" maxlength="40" style="font-size:17px;font-weight:700;"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();addWaOption();}">
+      </div>
+      <div id="waOptionList" style="margin-top:16px;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('waOptionModal')">Cerrar</button>
+      <button class="btn btn-primary" onclick="addWaOption()">✅ Agregar</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="addSellerModal">
   <div class="modal">
     <div class="modal-header">
@@ -3157,6 +3179,13 @@ let capitalData = {}; // aportes de capital de trabajo, mismo formato que expens
 // recrearlo con el mismo nombre se vuelven a vincular solos.
 let expenseTypes = [];
 let expenseTypeSel = null; // tipo elegido para el próximo gasto (queda el último usado)
+
+// ── Opciones de "Enlaces de WhatsApp": tipo de software y duración de licencia ──
+// Listas que Luis crea y elimina a su gusto: [{ key, name }]
+let waSoftwareList = [];
+let waDurationList = [];
+const DEFAULT_WA_SOFTWARE  = ['AutoCAD', 'Office'];
+const DEFAULT_WA_DURATIONS = ['1 año', '2 años', '3 años', 'Permanente'];
 const DEFAULT_EXPENSE_TYPES = [
   { key: 'iva',                      name: 'IVA',                       emoji: '🧾' },
   { key: 'licencias',                name: 'Licencias',                 emoji: '🔑' },
@@ -3422,6 +3451,8 @@ const STORAGE_CAMPAIGNS = 'mylifeapp_campaigns_v1';
 const STORAGE_SELLERS = 'mylifeapp_sellers_v1';
 const STORAGE_SOURCES = 'mylifeapp_sources_v1';
 const STORAGE_EXPTYPES = 'mylifeapp_exptypes_v1';
+const STORAGE_WASOFT = 'mylifeapp_wasoft_v1';
+const STORAGE_WADUR  = 'mylifeapp_wadur_v1';
 
 function saveToStorage() {
   try {
@@ -3439,6 +3470,8 @@ function saveToStorage() {
     localStorage.setItem(STORAGE_SELLERS, JSON.stringify(sellers));
     localStorage.setItem(STORAGE_SOURCES, JSON.stringify(saleSources));
     localStorage.setItem(STORAGE_EXPTYPES, JSON.stringify(expenseTypes));
+    localStorage.setItem(STORAGE_WASOFT, JSON.stringify(waSoftwareList));
+    localStorage.setItem(STORAGE_WADUR, JSON.stringify(waDurationList));
     localStorage.setItem(STORAGE_SECTIONS, JSON.stringify(sections));
     localStorage.setItem(STORAGE_STATE, JSON.stringify({
       currentMonth, currentYear, activeWeekKey,
@@ -3529,6 +3562,22 @@ function loadFromStorage() {
     } else {
       expenseTypes = DEFAULT_EXPENSE_TYPES.map(t => ({...t}));
       localStorage.setItem(STORAGE_EXPTYPES, JSON.stringify(expenseTypes));
+    }
+
+    // ── Cargar opciones de Enlaces de WhatsApp ──
+    const savedWaSoft = localStorage.getItem(STORAGE_WASOFT);
+    if (savedWaSoft) {
+      waSoftwareList = JSON.parse(savedWaSoft);
+    } else {
+      waSoftwareList = DEFAULT_WA_SOFTWARE.map(n => ({ key: slugSource(n), name: n }));
+      localStorage.setItem(STORAGE_WASOFT, JSON.stringify(waSoftwareList));
+    }
+    const savedWaDur = localStorage.getItem(STORAGE_WADUR);
+    if (savedWaDur) {
+      waDurationList = JSON.parse(savedWaDur);
+    } else {
+      waDurationList = DEFAULT_WA_DURATIONS.map(n => ({ key: slugSource(n), name: n }));
+      localStorage.setItem(STORAGE_WADUR, JSON.stringify(waDurationList));
     }
 
     // ── Cargar capital de trabajo ──
@@ -6768,6 +6817,16 @@ function renderWhatsAppLinksSection() {
           style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;color:var(--text);font-size:15px;font-family:'Outfit',sans-serif;margin-bottom:14px;"
           onkeydown="if(event.key==='Enter'){generateWhatsAppLink();}"
         >
+
+        <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:6px;">💻 Tipo de software <span style="font-weight:500;color:var(--text3);">(opcional)</span></label>
+        <div class="income-source-row" id="waSoftChips" style="margin-bottom:14px;"></div>
+
+        <label style="font-size:12px;font-weight:700;color:var(--text2);display:block;margin-bottom:6px;">⏳ Duración de la licencia <span style="font-weight:500;color:var(--text3);">(opcional)</span></label>
+        <div class="income-source-row" id="waDurChips" style="margin-bottom:14px;"></div>
+
+        <div style="font-size:11px;font-weight:700;color:var(--text3);letter-spacing:.5px;margin-bottom:6px;">MENSAJE QUE SE ENVIARÁ</div>
+        <div id="waMsgPreview" style="white-space:pre-wrap;font-size:12.5px;line-height:1.5;color:var(--text2);background:var(--surface);border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-bottom:14px;"></div>
+
         <button
           onclick="generateWhatsAppLink()"
           style="width:100%;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border:none;border-radius:10px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;font-family:'Outfit',sans-serif;">
@@ -6787,6 +6846,8 @@ function renderWhatsAppLinksSection() {
       </div>
     </div>
   `;
+  waSelSoft = null; waSelDur = null; // cada visita parte sin selección, para no enviar un programa por error
+  renderWaChips();
   document.getElementById('monthLabel').textContent = '';
   // Autofoco en el campo para poder pegar el número de inmediato
   setTimeout(() => {
@@ -6796,6 +6857,127 @@ function renderWhatsAppLinksSection() {
 }
 
 let _generatedWaLinkNumber = null;
+
+// ── Selección y mensaje personalizado ──
+let waSelSoft = null, waSelDur = null;       // claves elegidas (o null)
+let waOptionKind = 'soft';                   // qué lista está editando la ventana
+
+function waGetSelected(kind) {
+  const list = kind === 'soft' ? waSoftwareList : waDurationList;
+  const key  = kind === 'soft' ? waSelSoft : waSelDur;
+  return list.find(o => o.key === key) || null;
+}
+
+// "1 año" → "por 1 año"; "Permanente" → "de forma permanente"
+function waDurationPhrase(d) {
+  const n = String(d.name || '').trim();
+  if (/perman|vitalic|de por vida|ilimit/i.test(n)) return 'de forma permanente';
+  return 'por ' + n.charAt(0).toLowerCase() + n.slice(1);
+}
+
+// Mensaje de activación: el texto de siempre + una línea según lo elegido
+function buildWhatsAppMensajeActivacion() {
+  const sw = waGetSelected('soft');
+  const du = waGetSelected('dur');
+  let linea = '';
+  if (sw && du)  linea = `Necesita ${sw.name} ${waDurationPhrase(du)} cierto?`;
+  else if (sw)   linea = `Necesita ${sw.name} cierto?`;
+  else if (du)   linea = `Necesita una licencia ${waDurationPhrase(du)} cierto?`;
+  return linea ? WHATSAPP_MENSAJE_PREDETERMINADO + '\n\n' + linea : WHATSAPP_MENSAJE_PREDETERMINADO;
+}
+
+function waChipsHtml(kind) {
+  const list = kind === 'soft' ? waSoftwareList : waDurationList;
+  const sel  = kind === 'soft' ? waSelSoft : waSelDur;
+  return list.map(o => `
+    <button type="button" class="income-source-btn ${sel === o.key ? 'active-src' : ''}"
+      onclick="waToggle('${kind}','${o.key}')"><span>${escTxt(o.name)}</span></button>`).join('') +
+    `<button type="button" class="src-manage-btn" onclick="openWaOptionModal('${kind}')" title="Crear o borrar opciones">＋</button>`;
+}
+
+// Redibuja solo las fichas y la vista previa (no toca el número que estás escribiendo)
+function renderWaChips() {
+  if (waSelSoft && !waGetSelected('soft')) waSelSoft = null;
+  if (waSelDur  && !waGetSelected('dur'))  waSelDur  = null;
+  const a = document.getElementById('waSoftChips');
+  const b = document.getElementById('waDurChips');
+  const c = document.getElementById('waMsgPreview');
+  if (a) a.innerHTML = waChipsHtml('soft');
+  if (b) b.innerHTML = waChipsHtml('dur');
+  if (c) c.textContent = buildWhatsAppMensajeActivacion();
+}
+
+// Tocar una ficha la elige; tocarla de nuevo la quita
+function waToggle(kind, key) {
+  if (kind === 'soft') waSelSoft = (waSelSoft === key) ? null : key;
+  else                 waSelDur  = (waSelDur  === key) ? null : key;
+  renderWaChips();
+}
+
+// ── Crear / borrar opciones ──
+function openWaOptionModal(kind) {
+  waOptionKind = kind;
+  const soft = kind === 'soft';
+  document.getElementById('waOptionTitle').textContent = soft ? '💻 Tipos de software' : '⏳ Duraciones de licencia';
+  document.getElementById('waOptionLabel').textContent = soft ? 'Nombre del programa' : 'Duración (ej: 6 meses, 1 año, Permanente)';
+  const inp = document.getElementById('waOptionName');
+  inp.value = '';
+  inp.placeholder = soft ? 'Ej: Civil 3D, Revit, SketchUp...' : 'Ej: 6 meses';
+  renderWaOptionList();
+  document.getElementById('waOptionModal').classList.add('open');
+  setTimeout(() => inp.focus(), 120);
+}
+
+function renderWaOptionList() {
+  const box = document.getElementById('waOptionList');
+  if (!box) return;
+  const list = waOptionKind === 'soft' ? waSoftwareList : waDurationList;
+  box.innerHTML = list.length ? `
+    <div style="font-size:10px;font-weight:800;color:var(--text3);letter-spacing:1.2px;text-transform:uppercase;margin-bottom:8px;">
+      Opciones actuales (${list.length})
+    </div>
+    <div class="income-list">
+      ${list.map(o => `
+        <div class="income-item">
+          <div style="flex:1;min-width:0;font-size:14px;font-weight:700;color:var(--text2);">${escTxt(o.name)}</div>
+          <button class="income-del" onclick="deleteWaOption('${o.key}')">✕</button>
+        </div>`).join('')}
+    </div>` : `<div style="font-size:12px;color:var(--text3);">Todavía no hay opciones. Agrega la primera arriba.</div>`;
+}
+
+function addWaOption() {
+  const inp = document.getElementById('waOptionName');
+  if (!inp) return;
+  const name = inp.value.trim();
+  if (!name) { toast('⚠️ Ingresá un nombre'); inp.focus(); return; }
+  const key = slugSource(name);
+  if (!key) { toast('⚠️ Nombre no válido'); inp.focus(); return; }
+  const list = waOptionKind === 'soft' ? waSoftwareList : waDurationList;
+  if (list.some(o => o.key === key)) { toast('⚠️ Ya existe esa opción'); inp.focus(); return; }
+  list.push({ key, name });
+  if (waOptionKind === 'soft') waSelSoft = key; else waSelDur = key; // queda elegida
+  saveToStorage();
+  forceImmediateDriveSync();
+  inp.value = '';
+  renderWaOptionList();
+  renderWaChips();
+  toast(`✅ "${name}" agregado`);
+  inp.focus();
+}
+
+function deleteWaOption(key) {
+  const soft = waOptionKind === 'soft';
+  const list = soft ? waSoftwareList : waDurationList;
+  const item = list.find(o => o.key === key);
+  if (!item) return;
+  if (soft) waSoftwareList = waSoftwareList.filter(o => o.key !== key);
+  else      waDurationList = waDurationList.filter(o => o.key !== key);
+  saveToStorage();
+  forceImmediateDriveSync();
+  renderWaOptionList();
+  renderWaChips();
+  toast(`🗑️ "${item.name}" eliminado`);
+}
 
 // Mensaje predeterminado que se envía junto con el enlace de la sección
 // "Enlaces de WhatsApp". Si más adelante Luis pide cambiarlo, este es el
@@ -6852,7 +7034,7 @@ function openGeneratedWhatsAppLink() {
   // Reutilizamos openWhatsApp(), que ya distingue PC (abre la app oficial
   // de WhatsApp Desktop) vs. celular (abre la app oficial de WhatsApp) —
   // así este botón se comporta igual de bien en ambas plataformas.
-  openWhatsApp(_generatedWaLinkNumber, WHATSAPP_MENSAJE_PREDETERMINADO);
+  openWhatsApp(_generatedWaLinkNumber, buildWhatsAppMensajeActivacion());
 }
 
 function renderReportSection() {
@@ -8004,6 +8186,8 @@ function getAllDataForBackup() {
     incomeData: incomeData,
     expenseData: expenseData,
     expenseTypes: expenseTypes,
+    waSoftware: waSoftwareList,
+    waDurations: waDurationList,
     capitalData: capitalData,
     lastEmailPrefix: lastEmailPrefix,
     campaigns: campaigns,
@@ -8357,6 +8541,8 @@ function confirmImport() {
     if (backup.incomeData) incomeData = backup.incomeData;
     if (backup.expenseData) expenseData = backup.expenseData;
     if (backup.expenseTypes) expenseTypes = backup.expenseTypes;
+    if (backup.waSoftware) waSoftwareList = backup.waSoftware;
+    if (backup.waDurations) waDurationList = backup.waDurations;
     if (backup.capitalData) capitalData = backup.capitalData;
     if (backup.lastEmailPrefix) lastEmailPrefix = backup.lastEmailPrefix;
     if (backup.campaigns) campaigns = backup.campaigns;
@@ -8834,7 +9020,7 @@ const ALL_STORAGE_KEYS = [
   'mylifeapp_report_v1', 'mylifeapp_income_v1', 'mylifeapp_expense_v1',
   'mylifeapp_campaigns_v1', 'mylifeapp_sellers_v1', 'mylifeapp_sources_v1',
   'mylifeapp_sections_v1', 'mylifeapp_capital_v1', 'mylifeapp_emailprefix_v1',
-  'mylifeapp_exptypes_v1',
+  'mylifeapp_exptypes_v1', 'mylifeapp_wasoft_v1', 'mylifeapp_wadur_v1',
   'mylifeapp_notif_sent_v2' // seguimientos omitidos — SÍ debe sincronizarse
 ];
 
@@ -9209,6 +9395,7 @@ async function loadFromDriveIntoApp() {
       const packed = JSON.parse(rawContent);
       unpackAllDataFromDrive(packed);
       _lastKnownDriveModifiedTime = file.modifiedTime;
+      saveSyncBase(packAllDataForDrive()); // quedamos iguales a Drive
       // Recargar la app con los datos frescos de Drive, respetando la
       // sección donde el usuario está parado (no siempre Entrenamiento)
       if (typeof loadFromStorage === 'function') { loadFromStorage(); renderSidebar(); refreshCurrentView(); }
@@ -9260,6 +9447,7 @@ async function checkForRemoteChanges() {
     const packed = JSON.parse(rawContent);
     unpackAllDataFromDrive(packed);
     _lastKnownDriveModifiedTime = file.modifiedTime;
+    saveSyncBase(packAllDataForDrive()); // quedamos iguales a Drive
     if (typeof loadFromStorage === 'function') { loadFromStorage(); renderSidebar(); refreshCurrentView(); }
     console.log('🔄 Cambios nuevos detectados y aplicados desde otro dispositivo');
     maybeCreateDailyBackup(rawContent).catch(() => {});
@@ -9268,13 +9456,141 @@ async function checkForRemoteChanges() {
   }
 }
 
+// ───────── Fusión segura de datos entre dispositivos ─────────
+// Antes, cada subida a Drive reemplazaba el archivo COMPLETO con la copia de
+// ESTE dispositivo. Si otro dispositivo había guardado algo más nuevo (una
+// venta, un gasto…) y este todavía no lo había descargado, ese dato se
+// perdía. Ahora, antes de subir, si Drive tiene una versión que este
+// dispositivo no ha visto, se FUSIONAN las dos: nunca se pierde un registro
+// que exista en cualquiera de ellas.
+const SYNC_BASE_KEY = 'mylifeapp_basehash_v1'; // solo local, NO se sincroniza
+
+// Huella corta de un texto (cyrb53): sirve para saber si una sección cambió
+function hashSyncStr(str) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0, ch; i < str.length; i++) {
+    ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+// Guarda la huella de cada sección en el momento en que este dispositivo
+// quedó igual que Drive (después de descargar o de subir)
+function saveSyncBase(packed) {
+  try {
+    const map = {};
+    Object.keys(packed).forEach(k => { map[k] = hashSyncStr(String(packed[k])); });
+    localStorage.setItem(SYNC_BASE_KEY, JSON.stringify(map));
+  } catch (e) { /* no es crítico */ }
+}
+function loadSyncBase() {
+  try { return JSON.parse(localStorage.getItem(SYNC_BASE_KEY) || 'null'); } catch (e) { return null; }
+}
+
+function isPlainObj(x) { return x && typeof x === 'object' && !Array.isArray(x); }
+
+// Identidad de un registro (para no duplicarlo al unir)
+function syncItemId(item) {
+  if (item && typeof item === 'object') {
+    if (item.ts !== undefined && item.ts !== null) return 'ts:' + item.ts + '|' + item.amount + '|' + (item.date || '');
+    if (item.id !== undefined && item.id !== null) return 'id:' + item.id;
+    if (item.key !== undefined && item.key !== null) return 'key:' + item.key;
+    return 'json:' + JSON.stringify(item);
+  }
+  return 'v:' + String(item);
+}
+// Unión de dos listas sin repetir: primero lo local, luego lo remoto que falte
+function unionArrays(local, remote, idFn) {
+  const out = []; const seen = new Set();
+  local.forEach(it => { const id = idFn(it); if (!seen.has(id)) { seen.add(id); out.push(it); } });
+  remote.forEach(it => { const id = idFn(it); if (!seen.has(id)) { seen.add(id); out.push(it); } });
+  return out;
+}
+function syncClientKey(c) {
+  const digits = String((c && c.phone) || '').replace(/\D/g, '');
+  return digits ? 'p:' + digits : 'id:' + (c && c.id);
+}
+// Clientes: se unen por teléfono; si el cliente está en ambos, se unen sus compras
+function mergeClientLists(local, remote) {
+  const byKey = new Map(); const out = [];
+  local.forEach(c => { byKey.set(syncClientKey(c), c); out.push(c); });
+  remote.forEach(rc => {
+    const k = syncClientKey(rc);
+    const lc = byKey.get(k);
+    if (!lc) { byKey.set(k, rc); out.push(rc); return; }
+    lc.purchases = unionArrays(lc.purchases || [], rc.purchases || [], p => 'p:' + JSON.stringify(p));
+  });
+  return out;
+}
+// Fusiona el contenido (texto JSON) de UNA sección cuando ambos lados la cambiaron
+function mergeSyncValue(key, localStr, remoteStr) {
+  let l, r;
+  try { l = JSON.parse(localStr); r = JSON.parse(remoteStr); } catch (e) { return localStr; }
+  if (key === 'mylifeapp_clients_v1' && Array.isArray(l) && Array.isArray(r)) return JSON.stringify(mergeClientLists(l, r));
+  if (Array.isArray(l) && Array.isArray(r)) return JSON.stringify(unionArrays(l, r, syncItemId));
+  if (isPlainObj(l) && isPlainObj(r)) {
+    // Objetos por mes (ventas, gastos, capital, reporte…): se unen mes a mes
+    const out = { ...r };
+    Object.keys(l).forEach(m => {
+      if (Array.isArray(l[m]) && Array.isArray(r[m])) out[m] = unionArrays(l[m], r[m], syncItemId);
+      else if (isPlainObj(l[m]) && isPlainObj(r[m])) out[m] = { ...r[m], ...l[m] };
+      else out[m] = l[m];
+    });
+    return JSON.stringify(out);
+  }
+  return localStr; // texto simple u otro formato: gana lo local
+}
+// Fusiona TODO: por cada sección decide si gana lo local, lo remoto, o se unen
+function mergeSyncData(local, remote, base) {
+  const out = {};
+  const keys = new Set([...Object.keys(local), ...Object.keys(remote)]);
+  keys.forEach(k => {
+    const l = local[k], r = remote[k];
+    if (l === undefined) { out[k] = r; return; }
+    if (r === undefined) { out[k] = l; return; }
+    if (l === r) { out[k] = l; return; }
+    const b = base ? base[k] : undefined;
+    if (b !== undefined) {
+      if (hashSyncStr(String(l)) === b) { out[k] = r; return; } // yo no toqué esta sección: gana lo de Drive
+      if (hashSyncStr(String(r)) === b) { out[k] = l; return; } // Drive no la cambió: gana lo mío
+    }
+    out[k] = mergeSyncValue(k, l, r);                           // los dos la cambiaron: se unen
+  });
+  return out;
+}
+
 async function saveAllDataToDrive() {
   try {
     await ensureValidToken();
-    const packed = packAllDataForDrive();
-    const fileContent = JSON.stringify(packed);
+    let packed = packAllDataForDrive();
+    let fileContent = JSON.stringify(packed);
 
     const existingFile = await driveFindFile();
+
+    // ── Fusión segura ──
+    // Si en Drive hay una versión que este dispositivo NO ha visto (otro
+    // dispositivo guardó algo mientras tanto), no la pisamos: la descargamos,
+    // la fusionamos con lo local y subimos el resultado.
+    if (existingFile && existingFile.modifiedTime !== _lastKnownDriveModifiedTime) {
+      const remoteRaw = await driveGetFileContent(existingFile.id);
+      let remotePacked = null;
+      try { remotePacked = JSON.parse(remoteRaw); } catch (e) { /* archivo ilegible: seguimos con lo local */ }
+      if (remotePacked && typeof remotePacked === 'object') {
+        maybeCreateDailyBackup(remoteRaw).catch(() => {}); // copia de seguridad de lo que había en Drive
+        const merged = mergeSyncData(packed, remotePacked, loadSyncBase());
+        const mergedContent = JSON.stringify(merged);
+        if (mergedContent !== fileContent) {
+          unpackAllDataFromDrive(merged);        // lo fusionado también queda en este dispositivo
+          if (typeof loadFromStorage === 'function') { loadFromStorage(); renderSidebar(); refreshCurrentView(); }
+          packed = packAllDataForDrive();
+          fileContent = JSON.stringify(packed);
+          console.log('🔀 Cambios de otro dispositivo fusionados antes de subir');
+        }
+      }
+    }
 
     // Usamos fetch + multipart en ambos casos (crear y actualizar), no
     // gapi.client.drive.files.update() con media.body — ese método de la
@@ -9309,6 +9625,7 @@ async function saveAllDataToDrive() {
     const resData = await res.json().catch(() => null);
     if (resData?.modifiedTime) _lastKnownDriveModifiedTime = resData.modifiedTime;
     clearPendingSync(); // confirmado: ya no hay nada local sin subir
+    saveSyncBase(packed); // este dispositivo y Drive quedaron iguales
     console.log('✅ Datos guardados en Drive correctamente:', fileContent.length, 'bytes');
 
     // Además del archivo principal (que se sobrescribe siempre), guardamos
