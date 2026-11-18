@@ -2725,6 +2725,34 @@
   </div>
 </div>
 
+<!-- AJUSTAR CAPITAL DISPONIBLE -->
+<div class="modal-overlay" id="adjustCapitalModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">✏️ Ajustar capital disponible</div>
+      <button class="modal-close" onclick="closeModal('adjustCapitalModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="text-align:center;margin-bottom:14px;">
+        <div style="font-size:12px;color:var(--text3);">Capital disponible actual</div>
+        <div id="adjustCapitalCurrent" style="font-size:26px;font-weight:900;color:#4ade80;"></div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">💚 Capital disponible que quiero tener</label>
+        <input class="form-input" id="adjustCapitalAmount" type="text" inputmode="numeric" placeholder="0"
+          oninput="formatIncomeInput(this); adjustCapitalPreview()"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();saveAdjustCapital();}"
+          style="font-size:19px;font-weight:800;text-align:right;font-family:'JetBrains Mono',monospace;">
+      </div>
+      <div id="adjustCapitalPreview" style="font-size:12px;color:var(--text3);text-align:center;line-height:1.5;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('adjustCapitalModal')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveAdjustCapital()">✅ Ajustar</button>
+    </div>
+  </div>
+</div>
+
 <!-- ADD SELLER MODAL -->
 <!-- ADD SALE SOURCE MODAL -->
 <div class="modal-overlay" id="addSourceModal">
@@ -6540,23 +6568,27 @@ function renderCapitalSection(closeKeyboard) {
           💚 Capital disponible
         </div>
         <div style="font-size:44px;font-weight:900;color:#4ade80;line-height:1.1;">
-          $${capitalDisponible.toLocaleString('es-CL')}
+          ${capMoney(capitalDisponible)}
         </div>
         <div style="font-size:11px;color:var(--text3);margin-top:4px;">
           Capital ingresado (desde siempre) menos gastos SPA de ${MONTHS[vm-1]}
         </div>
+        <button onclick="openAdjustCapital(${capitalDisponible})"
+          style="margin-top:12px;background:rgba(74,222,128,0.12);border:1px solid rgba(74,222,128,0.45);color:#4ade80;font-weight:700;font-size:13px;padding:9px 18px;border-radius:999px;cursor:pointer;font-family:inherit;">
+          ✏️ Ajustar capital disponible
+        </button>
       </div>
 
       <div style="border-top:1px solid rgba(255,255,255,0.08);padding-top:14px;margin-top:16px;">
         <div class="income-daily-label" style="color:#facc15;">🏦 Capital ingresado ${isToday ? 'hoy' : 'ese día'}</div>
-        <div class="income-daily-total" style="font-size:24px;color:#facc15;">$${dayTotal.toLocaleString('es-CL')}</div>
+        <div class="income-daily-total" style="font-size:24px;color:#facc15;">${capMoney(dayTotal)}</div>
         <div class="income-sub">${dayEntries.length} aporte${dayEntries.length!==1?'s':''}</div>
       </div>
 
       <div style="border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;margin-top:14px;display:flex;flex-direction:column;gap:6px;">
         <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text3);">
           <span>Capital ingresado en ${MONTHS[vm-1]}:</span>
-          <span style="font-weight:700;color:#facc15;">$${monthTotal.toLocaleString('es-CL')}</span>
+          <span style="font-weight:700;color:#facc15;">${capMoney(monthTotal)}</span>
         </div>
         <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text3);">
           <span>Gastos SPA de ${MONTHS[vm-1]}:</span>
@@ -6590,11 +6622,11 @@ function renderCapitalSection(closeKeyboard) {
           ${sorted.map((e) => `
             <div class="income-item ${e.date === viewedISO ? 'income-item-highlight' : ''}">
               <div style="flex:1;min-width:0;">
-                <div class="income-item-amount">$${(parseFloat(e.amount)||0).toLocaleString('es-CL')}</div>
+                <div class="income-item-amount" ${(parseFloat(e.amount)||0) < 0 ? 'style="color:#f87171;"' : ''}>${capMoney(e.amount)}${e.adjust ? ' <span style="font-size:11px;font-weight:700;color:#facc15;">· AJUSTE</span>' : ''}</div>
                 ${e.desc ? `<div class="expense-desc-text">📝 ${e.desc}</div>` : ''}
                 <div class="income-item-date">${formatIncomeDate(e.date)}</div>
               </div>
-              <button class="income-edit" onclick="openEditExpenseOrCapital('capital','${monthKey}', ${entries.indexOf(e)})">✏️</button>
+              ${e.adjust ? '' : `<button class="income-edit" onclick="openEditExpenseOrCapital('capital','${monthKey}', ${entries.indexOf(e)})">✏️</button>`}
               <button class="income-del" onclick="deleteCapital('${monthKey}', ${entries.indexOf(e)})">✕</button>
             </div>`).join('')}
         </div>`}
@@ -6667,6 +6699,66 @@ function addCapital(closeKeyboard) {
   renderCapitalSection(closeKeyboard);
   const isToday = viewedISO === getTodayISO();
   toast(`✅ $${amount.toLocaleString('es-CL')} de capital agregado${isToday ? '' : ' el ' + formatIncomeDate(viewedISO)}`);
+}
+
+// $ con signo: 662.801 -> "$662.801"; -50000 -> "-$50.000"
+function capMoney(n) {
+  n = parseFloat(n) || 0;
+  return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString('es-CL');
+}
+
+// ── Ajustar el capital disponible a un monto exacto ──
+// Registra un aporte "AJUSTE" (positivo o negativo) por la diferencia, en la
+// fecha que se está viendo, para que el disponible quede EXACTO y todo cuadre
+// con la lista de aportes de abajo.
+let _adjustCapitalCurrent = 0;
+
+function _adjustCapitalParse() {
+  const el = document.getElementById('adjustCapitalAmount');
+  const digits = (el ? el.value : '').replace(/\D/g, '');
+  return digits === '' ? null : parseInt(digits, 10);
+}
+
+function adjustCapitalPreview() {
+  const box = document.getElementById('adjustCapitalPreview');
+  if (!box) return;
+  const target = _adjustCapitalParse();
+  if (target === null) { box.innerHTML = 'Escribí el capital disponible que querés ver.'; return; }
+  const diff = target - _adjustCapitalCurrent;
+  if (diff === 0) { box.innerHTML = 'Es el mismo monto que ya tenés. No hay nada que ajustar.'; return; }
+  box.innerHTML = `Se registrará un ajuste de <strong style="color:${diff > 0 ? '#4ade80' : '#f87171'};">${diff > 0 ? '+' : '-'}$${Math.abs(diff).toLocaleString('es-CL')}</strong> en los aportes de este mes.`;
+}
+
+function openAdjustCapital(current) {
+  _adjustCapitalCurrent = Math.round(parseFloat(current) || 0);
+  document.getElementById('adjustCapitalCurrent').textContent = capMoney(_adjustCapitalCurrent);
+  const inp = document.getElementById('adjustCapitalAmount');
+  inp.value = '';
+  adjustCapitalPreview();
+  document.getElementById('adjustCapitalModal').classList.add('open');
+  setTimeout(() => { try { inp.focus(); } catch(e) {} }, 150);
+}
+
+function saveAdjustCapital() {
+  const target = _adjustCapitalParse();
+  if (target === null) { toast('⚠️ Ingresá el nuevo capital disponible'); return; }
+  const diff = target - _adjustCapitalCurrent;
+  if (diff === 0) { closeModal('adjustCapitalModal'); toast('Sin cambios: ya es ese monto'); return; }
+  const viewedISO = getViewedCapitalISO();
+  const key = viewedISO.slice(0,7);
+  if (!capitalData[key]) capitalData[key] = [];
+  capitalData[key].push({
+    amount: diff,
+    date: viewedISO,
+    ts: Date.now(),
+    desc: `Ajuste de capital disponible (de ${capMoney(_adjustCapitalCurrent)} a ${capMoney(target)})`,
+    adjust: true
+  });
+  saveToStorage();
+  forceImmediateDriveSync();
+  closeModal('adjustCapitalModal');
+  renderCapitalSection('skip');
+  toast(`✅ Capital disponible ajustado a ${capMoney(target)}`);
 }
 
 function deleteCapital(key, index) {
