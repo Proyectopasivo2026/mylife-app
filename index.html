@@ -3486,6 +3486,7 @@ const STORAGE_SOURCES = 'mylifeapp_sources_v1';
 const STORAGE_EXPTYPES = 'mylifeapp_exptypes_v1';
 const STORAGE_WASOFT = 'mylifeapp_wasoft_v1';
 const STORAGE_WADUR  = 'mylifeapp_wadur_v1';
+const STORAGE_DISTRIB = 'mylifeapp_distrib_v1';
 
 function saveToStorage() {
   try {
@@ -3506,6 +3507,7 @@ function saveToStorage() {
     localStorage.setItem(STORAGE_EXPTYPES, JSON.stringify(expenseTypes));
     localStorage.setItem(STORAGE_WASOFT, JSON.stringify(waSoftwareList));
     localStorage.setItem(STORAGE_WADUR, JSON.stringify(waDurationList));
+    localStorage.setItem(STORAGE_DISTRIB, JSON.stringify(distribState));
     localStorage.setItem(STORAGE_SECTIONS, JSON.stringify(sections));
     localStorage.setItem(STORAGE_STATE, JSON.stringify({
       currentMonth, currentYear, activeWeekKey,
@@ -3613,6 +3615,15 @@ function loadFromStorage() {
       waDurationList = DEFAULT_WA_DURATIONS.map(n => ({ key: slugSource(n), name: n }));
       localStorage.setItem(STORAGE_WADUR, JSON.stringify(waDurationList));
     }
+
+    // ── Cargar distribución de ventas ──
+    try {
+      const savedDist = localStorage.getItem(STORAGE_DISTRIB);
+      if (savedDist) {
+        const d = JSON.parse(savedDist);
+        if (d && Array.isArray(d.items) && d.items.length) distribState = d;
+      }
+    } catch (e) {}
 
     // ── Cargar capital de trabajo ──
     const savedCapital = localStorage.getItem(STORAGE_CAPITAL);
@@ -5730,6 +5741,105 @@ function incomeGoToday() {
   renderIncomeSection('skip');
 }
 
+// ───────── Distribución de las ventas (IVA, reposición, capital, ganancia) ─────────
+const DISTRIB_DEFAULT = [
+  { key: 'iva',        name: 'IVA (F29)',               pct: 19, on: true },
+  { key: 'reposicion', name: 'Reposición de licencias', pct: 10, on: true },
+  { key: 'capital',    name: 'Crecimiento de capital',  pct: 11, on: true },
+  { key: 'ganancia',   name: 'Ganancia neta',           pct: 60, on: true }
+];
+let distribState = { at: 0, items: DISTRIB_DEFAULT.map(i => ({ ...i })) };
+let _distribBase = 0;
+let _distribSaveTimer = null;
+
+function _fmtPct(n) { return (Math.round(n * 100) / 100).toString().replace('.', ','); }
+function _money(n) { return '$' + Math.round(n).toLocaleString('es-CL'); }
+
+function distribSave() {
+  distribState.at = Date.now();
+  clearTimeout(_distribSaveTimer);
+  _distribSaveTimer = setTimeout(() => { saveToStorage(); forceImmediateDriveSync(); }, 600);
+}
+
+// Actualiza montos y totales sin volver a dibujar (para no perder el cursor al escribir)
+function distribRefreshNumbers() {
+  let sumPct = 0, sumAmt = 0;
+  distribState.items.forEach((it, i) => {
+    const amt = it.on ? Math.round(_distribBase * it.pct / 100) : 0;
+    if (it.on) { sumPct += it.pct; sumAmt += amt; }
+    const el = document.getElementById('distribAmt' + i);
+    if (el) {
+      el.textContent = it.on ? _money(amt) : 'Omitido';
+      el.style.opacity = it.on ? '1' : '0.5';
+    }
+  });
+  const rest = 100 - sumPct;
+  const t = document.getElementById('distribTotal');
+  if (t) t.textContent = _fmtPct(sumPct) + '% · ' + _money(sumAmt);
+  const note = document.getElementById('distribNote');
+  if (note) {
+    if (Math.abs(rest) < 0.005) { note.innerHTML = '✅ Distribuido el 100% de las ventas'; note.style.color = '#4ade80'; }
+    else if (rest > 0) { note.innerHTML = `Sin distribuir: <strong>${_fmtPct(rest)}%</strong> · ${_money(_distribBase * rest / 100)}`; note.style.color = '#facc15'; }
+    else { note.innerHTML = `⚠️ Te pasaste por <strong>${_fmtPct(-rest)}%</strong> · ${_money(_distribBase * -rest / 100)}`; note.style.color = '#f87171'; }
+  }
+}
+
+function distribSetPct(i, value) {
+  const it = distribState.items[i]; if (!it) return;
+  let v = parseFloat(String(value).replace(',', '.'));
+  if (!isFinite(v) || v < 0) v = 0;
+  if (v > 100) v = 100;
+  it.pct = v;
+  distribRefreshNumbers();
+  distribSave();
+}
+
+function distribToggle(i) {
+  const it = distribState.items[i]; if (!it) return;
+  it.on = !it.on;
+  distribSave();
+  renderIncomeSection('skip');
+}
+
+function distribReset() {
+  distribState.items = DISTRIB_DEFAULT.map(x => ({ ...x }));
+  distribSave();
+  renderIncomeSection('skip');
+  toast('↺ Porcentajes restablecidos (19 / 10 / 11 / 60)');
+}
+
+function distribCardHtml(base, label) {
+  _distribBase = base;
+  const rows = distribState.items.map((it, i) => `
+    <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-top:1px solid rgba(255,255,255,0.07);">
+      <div style="width:20px;font-size:12px;font-weight:800;color:var(--text3);">${i + 1}</div>
+      <div style="flex:1;min-width:0;font-size:14px;font-weight:700;${it.on ? '' : 'opacity:.5;text-decoration:line-through;'}">${it.name}</div>
+      <div style="display:flex;align-items:center;gap:2px;">
+        <input type="text" inputmode="decimal" value="${_fmtPct(it.pct)}" ${it.on ? '' : 'disabled'}
+          oninput="distribSetPct(${i}, this.value)" onfocus="this.select()"
+          style="width:52px;text-align:right;font-size:15px;font-weight:800;padding:6px 6px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:'JetBrains Mono',monospace;${it.on ? '' : 'opacity:.4;'}">
+        <span style="font-size:13px;color:var(--text3);">%</span>
+      </div>
+      <div id="distribAmt${i}" style="min-width:78px;text-align:right;font-size:14px;font-weight:800;color:#4ade80;font-family:'JetBrains Mono',monospace;"></div>
+      <button onclick="distribToggle(${i})" title="${it.on ? 'Omitir este porcentaje' : 'Volver a incluir'}"
+        style="background:none;border:1px solid var(--border);border-radius:8px;width:34px;height:34px;font-size:15px;cursor:pointer;">${it.on ? '✅' : '⛔'}</button>
+    </div>`).join('');
+  return `
+    <div class="income-add-box" style="margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+        <div style="font-size:13px;font-weight:800;color:#facc15;letter-spacing:1px;text-transform:uppercase;">📊 Distribución de ventas</div>
+        <button onclick="distribReset()" style="background:none;border:none;color:var(--text3);font-size:11px;cursor:pointer;text-decoration:underline;">↺ Restablecer</button>
+      </div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:6px;">Sobre las ventas ${label}: <strong style="color:var(--text);">${_money(base)}</strong></div>
+      ${rows}
+      <div style="display:flex;justify-content:space-between;padding:10px 0 2px;border-top:1px solid rgba(255,255,255,0.15);font-size:13px;font-weight:800;">
+        <span>Total distribuido</span><span id="distribTotal"></span>
+      </div>
+      <div id="distribNote" style="font-size:12px;text-align:right;"></div>
+      <div style="font-size:11px;color:var(--text3);margin-top:8px;line-height:1.4;">Cambiá un % y los montos se recalculan solos. Con ⛔ omitís una parte hoy sin tocar su porcentaje.</div>
+    </div>`;
+}
+
 function renderIncomeSection(closeKeyboard) {
   // GUARDIA: no renderizar si no estamos en la sección Registro de Ingresos (id 9)
   if (activeSection !== 9) return;
@@ -5818,6 +5928,8 @@ function renderIncomeSection(closeKeyboard) {
         <span class="income-month-label">· ${diasConVentas.length} día${diasConVentas.length!==1?'s':''} con ventas</span>
       </div>
     </div>
+
+    ${distribCardHtml(dayTotal, isToday ? 'de hoy' : 'de ese día')}
 
     <div class="income-add-box">
       <div style="font-size:11px;color:var(--text3);margin-bottom:8px;text-align:center;">
@@ -5913,6 +6025,7 @@ function renderIncomeSection(closeKeyboard) {
         </div>
       </div>` : ''}
   `;
+  distribRefreshNumbers();
 
   setTimeout(() => {
     const inp = document.getElementById('incomeAmount');
@@ -9172,7 +9285,7 @@ const ALL_STORAGE_KEYS = [
   'mylifeapp_campaigns_v1', 'mylifeapp_sellers_v1', 'mylifeapp_sources_v1',
   'mylifeapp_sections_v1', 'mylifeapp_capital_v1', 'mylifeapp_emailprefix_v1',
   'mylifeapp_exptypes_v1', 'mylifeapp_wasoft_v1', 'mylifeapp_wadur_v1',
-  'mylifeapp_emailstate_v1',
+  'mylifeapp_emailstate_v1', 'mylifeapp_distrib_v1',
   'mylifeapp_notif_sent_v2' // seguimientos omitidos — SÍ debe sincronizarse
 ];
 
@@ -9687,7 +9800,7 @@ function pickHigherEmailPrefix(a, b) {
 }
 function mergeSyncValue(key, localStr, remoteStr) {
   if (key === 'mylifeapp_emailprefix_v1') return pickHigherEmailPrefix(localStr, remoteStr);
-  if (key === 'mylifeapp_emailstate_v1') {
+  if (key === 'mylifeapp_emailstate_v1' || key === 'mylifeapp_distrib_v1') {
     try { const a = JSON.parse(localStr), b = JSON.parse(remoteStr); return ((b && b.at) || 0) > ((a && a.at) || 0) ? remoteStr : localStr; }
     catch (e) { return localStr; }
   }
