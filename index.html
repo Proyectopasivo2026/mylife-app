@@ -3487,6 +3487,7 @@ const STORAGE_EXPTYPES = 'mylifeapp_exptypes_v1';
 const STORAGE_WASOFT = 'mylifeapp_wasoft_v1';
 const STORAGE_WADUR  = 'mylifeapp_wadur_v1';
 const STORAGE_DISTRIB = 'mylifeapp_distrib_v1';
+const STORAGE_REMANENTE = 'mylifeapp_remanente_v1';
 
 function saveToStorage() {
   try {
@@ -3508,6 +3509,7 @@ function saveToStorage() {
     localStorage.setItem(STORAGE_WASOFT, JSON.stringify(waSoftwareList));
     localStorage.setItem(STORAGE_WADUR, JSON.stringify(waDurationList));
     localStorage.setItem(STORAGE_DISTRIB, JSON.stringify(distribState));
+    localStorage.setItem(STORAGE_REMANENTE, JSON.stringify(remanenteData));
     localStorage.setItem(STORAGE_SECTIONS, JSON.stringify(sections));
     localStorage.setItem(STORAGE_STATE, JSON.stringify({
       currentMonth, currentYear, activeWeekKey,
@@ -3615,6 +3617,12 @@ function loadFromStorage() {
       waDurationList = DEFAULT_WA_DURATIONS.map(n => ({ key: slugSource(n), name: n }));
       localStorage.setItem(STORAGE_WADUR, JSON.stringify(waDurationList));
     }
+
+    // ── Cargar remanente ──
+    try {
+      const savedRem = localStorage.getItem(STORAGE_REMANENTE);
+      if (savedRem) { const r = JSON.parse(savedRem); if (r && typeof r === 'object' && !Array.isArray(r)) remanenteData = r; }
+    } catch (e) {}
 
     // ── Cargar distribución de ventas ──
     try {
@@ -5840,6 +5848,87 @@ function distribCardHtml(base, label) {
     </div>`;
 }
 
+// ───────── Remanente total disponible (acumulable, histórico de todos los meses) ─────────
+let remanenteData = {}; // { 'YYYY-MM': [ { amount (+ suma / - descuento), date, ts, desc } ] }
+
+function remanenteTotal() {
+  return Object.values(remanenteData).reduce(
+    (s, arr) => s + (Array.isArray(arr) ? arr.reduce((s2, e) => s2 + (parseFloat(e.amount) || 0), 0) : 0), 0);
+}
+
+function remanenteCardHtml(viewedISO) {
+  const MONTHS = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const [vy, vm] = viewedISO.split('-').map(Number);
+  const key = `${vy}-${String(vm).padStart(2,'0')}`;
+  const entries = Array.isArray(remanenteData[key]) ? remanenteData[key] : [];
+  const total = remanenteTotal();
+  const monthNet = entries.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+  const sorted = [...entries].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  const col = total < 0 ? '#f87171' : '#a78bfa';
+  return `
+    <div class="income-add-box" style="margin-top:14px;">
+      <div style="font-size:13px;font-weight:800;color:#a78bfa;letter-spacing:1px;text-transform:uppercase;text-align:center;">💎 Remanente total disponible</div>
+      <div style="font-size:38px;font-weight:900;color:${col};text-align:center;line-height:1.15;margin:6px 0 2px;">${capMoney(total)}</div>
+      <div style="font-size:11px;color:var(--text3);text-align:center;margin-bottom:14px;">Acumulado de todos los meses · ${MONTHS[vm-1]}: ${monthNet > 0 ? '+' : ''}${capMoney(monthNet)}</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:8px;text-align:center;">
+        Se registrará el <strong style="color:#a78bfa">${formatIncomeDate(viewedISO)}</strong>
+      </div>
+      <input class="expense-desc-input" id="remanenteDesc" type="text" placeholder="📝 Descripción (opcional)"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('remanenteAmount').focus();}">
+      <div class="income-input-row">
+        <span class="income-currency">$</span>
+        <input class="income-input" id="remanenteAmount" type="text" inputmode="numeric" placeholder="0"
+          oninput="formatIncomeInput(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();remanenteAdd(1);}">
+      </div>
+      <div style="display:flex;gap:10px;margin-top:10px;">
+        <button class="income-add-btn" style="flex:1;margin:0;" onclick="remanenteAdd(1)">＋ Agregar</button>
+        <button class="income-add-btn" style="flex:1;margin:0;background:linear-gradient(135deg,#f87171,#dc2626);" onclick="remanenteAdd(-1)">－ Descontar</button>
+      </div>
+      <div style="font-size:11px;font-weight:700;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin:18px 0 8px;">
+        Movimientos de ${MONTHS[vm-1]}
+      </div>
+      ${sorted.length === 0
+        ? `<div class="income-empty" style="padding:10px 0;">Sin movimientos este mes.</div>`
+        : `<div class="income-list">${sorted.map(e => {
+            const a = parseFloat(e.amount) || 0;
+            return `
+            <div class="income-item">
+              <div style="flex:1;min-width:0;">
+                <div class="income-item-amount" style="color:${a < 0 ? '#f87171' : '#a78bfa'};">${a < 0 ? '−' : '+'}$${Math.abs(a).toLocaleString('es-CL')}</div>
+                ${e.desc ? `<div class="expense-desc-text">📝 ${e.desc}</div>` : ''}
+                <div class="income-item-date">${formatIncomeDate(e.date)} · ${a < 0 ? 'Descuento' : 'Remanente'}</div>
+              </div>
+              <button class="income-del" onclick="remanenteDelete('${key}', ${entries.indexOf(e)})">✕</button>
+            </div>`; }).join('')}</div>`}
+    </div>`;
+}
+
+function remanenteAdd(sign) {
+  const inp = document.getElementById('remanenteAmount');
+  const desc = document.getElementById('remanenteDesc');
+  if (!inp) return;
+  const n = parseFloat(inp.value.replace(/\D/g, ''));
+  if (!n || n <= 0) { toast('⚠️ Ingresá un monto válido'); inp.focus(); return; }
+  const iso = getViewedISO();
+  const key = iso.slice(0, 7);
+  if (!Array.isArray(remanenteData[key])) remanenteData[key] = [];
+  remanenteData[key].push({ amount: sign * n, date: iso, ts: Date.now(), desc: desc ? desc.value.trim() : '' });
+  saveToStorage();
+  forceImmediateDriveSync();
+  renderIncomeSection('skip');
+  toast(sign > 0 ? `✅ $${n.toLocaleString('es-CL')} agregados al remanente` : `➖ $${n.toLocaleString('es-CL')} descontados del remanente`);
+}
+
+function remanenteDelete(key, index) {
+  if (!Array.isArray(remanenteData[key]) || index < 0) return;
+  remanenteData[key].splice(index, 1);
+  if (!remanenteData[key].length) delete remanenteData[key];
+  saveToStorage();
+  forceImmediateDriveSync();
+  renderIncomeSection('skip');
+  toast('🗑️ Movimiento eliminado');
+}
+
 function renderIncomeSection(closeKeyboard) {
   // GUARDIA: no renderizar si no estamos en la sección Registro de Ingresos (id 9)
   if (activeSection !== 9) return;
@@ -5928,8 +6017,6 @@ function renderIncomeSection(closeKeyboard) {
         <span class="income-month-label">· ${diasConVentas.length} día${diasConVentas.length!==1?'s':''} con ventas</span>
       </div>
     </div>
-
-    ${distribCardHtml(dayTotal, isToday ? 'de hoy' : 'de ese día')}
 
     <div class="income-add-box">
       <div style="font-size:11px;color:var(--text3);margin-bottom:8px;text-align:center;">
@@ -6024,6 +6111,10 @@ function renderIncomeSection(closeKeyboard) {
           </div>
         </div>
       </div>` : ''}
+
+    ${distribCardHtml(dayTotal, isToday ? 'de hoy' : 'de ese día')}
+
+    ${remanenteCardHtml(viewedISO)}
   `;
   distribRefreshNumbers();
 
@@ -8451,6 +8542,7 @@ function getAllDataForBackup() {
     waSoftware: waSoftwareList,
     waDurations: waDurationList,
     capitalData: capitalData,
+    remanenteData: remanenteData,
     lastEmailPrefix: lastEmailPrefix,
     emailState: emailState,
     campaigns: campaigns,
@@ -8807,6 +8899,7 @@ function confirmImport() {
     if (backup.waSoftware) waSoftwareList = backup.waSoftware;
     if (backup.waDurations) waDurationList = backup.waDurations;
     if (backup.capitalData) capitalData = backup.capitalData;
+    if (backup.remanenteData) remanenteData = backup.remanenteData;
     if (backup.lastEmailPrefix) lastEmailPrefix = backup.lastEmailPrefix;
     if (backup.emailState && typeof backup.emailState === 'object') emailState = backup.emailState;
     if (backup.campaigns) campaigns = backup.campaigns;
@@ -9285,7 +9378,7 @@ const ALL_STORAGE_KEYS = [
   'mylifeapp_campaigns_v1', 'mylifeapp_sellers_v1', 'mylifeapp_sources_v1',
   'mylifeapp_sections_v1', 'mylifeapp_capital_v1', 'mylifeapp_emailprefix_v1',
   'mylifeapp_exptypes_v1', 'mylifeapp_wasoft_v1', 'mylifeapp_wadur_v1',
-  'mylifeapp_emailstate_v1', 'mylifeapp_distrib_v1',
+  'mylifeapp_emailstate_v1', 'mylifeapp_distrib_v1', 'mylifeapp_remanente_v1',
   'mylifeapp_notif_sent_v2' // seguimientos omitidos — SÍ debe sincronizarse
 ];
 
