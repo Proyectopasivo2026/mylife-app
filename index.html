@@ -3490,6 +3490,7 @@ const STORAGE_DISTRIB = 'mylifeapp_distrib_v1';
 const STORAGE_REMANENTE = 'mylifeapp_remanente_v1';
 
 function saveToStorage() {
+  try { reconcileAutoCapital(); } catch (e) { console.warn('auto-capital:', e); }
   try {
     // Only save entries that have been modified (non-empty)
     // We save ALL data so nothing is lost
@@ -3732,6 +3733,7 @@ function loadFromStorage() {
       activeDayFilter = s.activeDayFilter || 'todos';
       if (s.activeSection) activeSection = s.activeSection;
     }
+    try { if (reconcileAutoCapital()) saveToStorage(); } catch (e) { console.warn('auto-capital:', e); }
     return !!savedData;
   } catch(e) {
     console.warn('No se pudo cargar:', e);
@@ -5756,15 +5758,93 @@ const DISTRIB_DEFAULT = [
   { key: 'capital',    name: 'Crecimiento de capital',  pct: 11, on: true },
   { key: 'ganancia',   name: 'Ganancia neta',           pct: 60, on: true }
 ];
-let distribState = { at: 0, items: DISTRIB_DEFAULT.map(i => ({ ...i })) };
+let distribState = { at: 0, items: DISTRIB_DEFAULT.map(i => ({ ...i })), autoCapital: true, autoSkip: {} };
 let _distribBase = 0;
 let _distribSaveTimer = null;
+
+// ── Capital automático ──
+// Cada día con ventas, la reposición de licencias + el crecimiento de capital
+// (hoy 10% + 11%) se suman SOLOS al capital de trabajo, como un aporte "AUTO".
+// Solo cuenta desde esta fecha en adelante (no toca las ventas anteriores).
+const DISTRIB_AUTO_SINCE = '2026-11-19';
+
+function autoCapitalPct() {
+  return distribState.items
+    .filter(i => (i.key === 'reposicion' || i.key === 'capital') && i.on)
+    .reduce((s, i) => s + (parseFloat(i.pct) || 0), 0);
+}
+
+// Deja el capital cuadrado con las ventas. Devuelve true si cambió algo.
+function reconcileAutoCapital() {
+  if (!distribState || distribState.autoCapital === false) return false;
+  const skip = distribState.autoSkip || {};
+  const today = getTodayISO();
+  const totals = {};
+  Object.keys(incomeData || {}).forEach(mk => {
+    (Array.isArray(incomeData[mk]) ? incomeData[mk] : []).forEach(e => {
+      if (e && e.date && e.date >= DISTRIB_AUTO_SINCE) totals[e.date] = (totals[e.date] || 0) + (parseFloat(e.amount) || 0);
+    });
+  });
+  const existing = {};
+  Object.keys(capitalData || {}).forEach(mk => {
+    (Array.isArray(capitalData[mk]) ? capitalData[mk] : []).forEach(e => {
+      if (e && e.auto && e.date) (existing[e.date] = existing[e.date] || []).push(e);
+    });
+  });
+  const dates = new Set([...Object.keys(totals), ...Object.keys(existing)]);
+  const curPct = autoCapitalPct();
+  let changed = false;
+  dates.forEach(date => {
+    const base = Math.round(totals[date] || 0);
+    const cur = existing[date] || [];
+    // Los días pasados conservan el % con que se calcularon; hoy usa el % actual
+    const pct = (cur.length && date < today && typeof cur[0].pct === 'number') ? cur[0].pct : curPct;
+    const amount = (skip[date] || base <= 0) ? 0 : Math.round(base * pct / 100);
+    const ts = new Date(date + 'T12:00:00Z').getTime();
+    if (amount <= 0) {
+      if (cur.length) { removeAutoEntries(date); changed = true; }
+      return;
+    }
+    if (cur.length === 1 && cur[0].amount === amount && cur[0].pct === pct && cur[0].base === base && cur[0].ts === ts) return;
+    removeAutoEntries(date);
+    const mk = date.slice(0, 7);
+    if (!Array.isArray(capitalData[mk])) capitalData[mk] = [];
+    capitalData[mk].push({
+      amount, date, ts, auto: true, pct, base,
+      desc: `Reposición + crecimiento automático (${_fmtPct(pct)}% de ${_money(base)} en ventas)`
+    });
+    changed = true;
+  });
+  return changed;
+}
+
+function removeAutoEntries(date) {
+  const mk = date.slice(0, 7);
+  if (!Array.isArray(capitalData[mk])) return;
+  capitalData[mk] = capitalData[mk].filter(e => !(e && e.auto && e.date === date));
+  if (!capitalData[mk].length) delete capitalData[mk];
+}
+
+function distribToggleAutoCapital() {
+  distribState.autoCapital = distribState.autoCapital === false ? true : false;
+  distribSave();
+  renderIncomeSection('skip');
+  toast(distribState.autoCapital ? '✅ Capital automático activado' : '⛔ Capital automático desactivado (lo ya registrado se mantiene)');
+}
+
+function distribReactivateDay(date) {
+  if (distribState.autoSkip) delete distribState.autoSkip[date];
+  distribSave();
+  renderIncomeSection('skip');
+  toast('↩ Aporte automático reactivado para ese día');
+}
 
 function _fmtPct(n) { return (Math.round(n * 100) / 100).toString().replace('.', ','); }
 function _money(n) { return '$' + Math.round(n).toLocaleString('es-CL'); }
 
 function distribSave() {
   distribState.at = Date.now();
+  try { reconcileAutoCapital(); } catch (e) {}
   clearTimeout(_distribSaveTimer);
   _distribSaveTimer = setTimeout(() => { saveToStorage(); forceImmediateDriveSync(); }, 600);
 }
@@ -5781,6 +5861,14 @@ function distribRefreshNumbers() {
       el.style.opacity = it.on ? '1' : '0.5';
     }
   });
+  const capNote = document.getElementById('distribCapNote');
+  if (capNote) {
+    const vIso = getViewedISO();
+    const skipped = distribState.autoSkip && distribState.autoSkip[vIso];
+    if (vIso < DISTRIB_AUTO_SINCE) capNote.textContent = 'Este día es anterior a la activación: no se suma automáticamente.';
+    else if (skipped) capNote.textContent = 'Este día lo quitaste del capital automático.';
+    else { const p = autoCapitalPct(); capNote.innerHTML = p > 0 ? `Se suman <strong style="color:#4ade80;">${_money(_distribBase * p / 100)}</strong> (${_fmtPct(p)}%) al capital de trabajo` : 'No hay porcentajes activos de reposición/capital.'; }
+  }
   const rest = 100 - sumPct;
   const t = document.getElementById('distribTotal');
   if (t) t.textContent = _fmtPct(sumPct) + '% · ' + _money(sumAmt);
@@ -5844,6 +5932,19 @@ function distribCardHtml(base, label) {
         <span>Total distribuido</span><span id="distribTotal"></span>
       </div>
       <div id="distribNote" style="font-size:12px;text-align:right;"></div>
+      ${(() => {
+        const on = distribState.autoCapital !== false;
+        const vIso = getViewedISO();
+        const skipped = distribState.autoSkip && distribState.autoSkip[vIso];
+        return `
+      <div style="margin-top:12px;padding:10px;border-radius:12px;border:1px solid rgba(74,222,128,0.35);background:rgba(74,222,128,0.07);">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div style="flex:1;font-size:12px;font-weight:700;color:#4ade80;">🏦 Sumar reposición + crecimiento al capital de trabajo automáticamente</div>
+          <button onclick="distribToggleAutoCapital()" style="background:none;border:1px solid var(--border);border-radius:8px;width:34px;height:34px;font-size:15px;cursor:pointer;">${on ? '✅' : '⛔'}</button>
+        </div>
+        ${on ? `<div id="distribCapNote" style="font-size:12px;color:var(--text2);margin-top:6px;"></div>` : ''}
+        ${on && skipped ? `<button onclick="distribReactivateDay('${vIso}')" style="margin-top:6px;background:none;border:none;color:#facc15;font-size:12px;text-decoration:underline;cursor:pointer;padding:0;">↩ Reactivar el aporte automático de este día</button>` : ''}
+      </div>`; })()}
       <div style="font-size:11px;color:var(--text3);margin-top:8px;line-height:1.4;">Cambiá un % y los montos se recalculan solos. Con ⛔ omitís una parte hoy sin tocar su porcentaje.</div>
     </div>`;
 }
@@ -5864,14 +5965,14 @@ function remanenteCardHtml(viewedISO) {
   const total = remanenteTotal();
   const monthNet = entries.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
   const sorted = [...entries].sort((a, b) => (b.ts || 0) - (a.ts || 0));
-  const col = total < 0 ? '#f87171' : '#a78bfa';
+  const col = total < 0 ? '#f87171' : '#facc15';
   return `
     <div class="income-add-box" style="margin-top:14px;">
-      <div style="font-size:13px;font-weight:800;color:#a78bfa;letter-spacing:1px;text-transform:uppercase;text-align:center;">💎 Remanente total disponible</div>
+      <div style="font-size:13px;font-weight:800;color:#facc15;letter-spacing:1px;text-transform:uppercase;text-align:center;">💎 Remanente total disponible</div>
       <div style="font-size:38px;font-weight:900;color:${col};text-align:center;line-height:1.15;margin:6px 0 2px;">${capMoney(total)}</div>
       <div style="font-size:11px;color:var(--text3);text-align:center;margin-bottom:14px;">Acumulado de todos los meses · ${MONTHS[vm-1]}: ${monthNet > 0 ? '+' : ''}${capMoney(monthNet)}</div>
       <div style="font-size:11px;color:var(--text3);margin-bottom:8px;text-align:center;">
-        Se registrará el <strong style="color:#a78bfa">${formatIncomeDate(viewedISO)}</strong>
+        Se registrará el <strong style="color:#facc15">${formatIncomeDate(viewedISO)}</strong>
       </div>
       <input class="expense-desc-input" id="remanenteDesc" type="text" placeholder="📝 Descripción (opcional)"
         onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('remanenteAmount').focus();}">
@@ -5894,7 +5995,7 @@ function remanenteCardHtml(viewedISO) {
             return `
             <div class="income-item">
               <div style="flex:1;min-width:0;">
-                <div class="income-item-amount" style="color:${a < 0 ? '#f87171' : '#a78bfa'};">${a < 0 ? '−' : '+'}$${Math.abs(a).toLocaleString('es-CL')}</div>
+                <div class="income-item-amount" style="color:${a < 0 ? '#f87171' : '#facc15'};">${a < 0 ? '−' : '+'}$${Math.abs(a).toLocaleString('es-CL')}</div>
                 ${e.desc ? `<div class="expense-desc-text">📝 ${e.desc}</div>` : ''}
                 <div class="income-item-date">${formatIncomeDate(e.date)} · ${a < 0 ? 'Descuento' : 'Remanente'}</div>
               </div>
@@ -6826,11 +6927,11 @@ function renderCapitalSection(closeKeyboard) {
           ${sorted.map((e) => `
             <div class="income-item ${e.date === viewedISO ? 'income-item-highlight' : ''}">
               <div style="flex:1;min-width:0;">
-                <div class="income-item-amount" ${(parseFloat(e.amount)||0) < 0 ? 'style="color:#f87171;"' : ''}>${capMoney(e.amount)}${e.adjust ? ' <span style="font-size:11px;font-weight:700;color:#facc15;">· AJUSTE</span>' : ''}</div>
+                <div class="income-item-amount" ${(parseFloat(e.amount)||0) < 0 ? 'style="color:#f87171;"' : ''}>${capMoney(e.amount)}${e.adjust ? ' <span style="font-size:11px;font-weight:700;color:#facc15;">· AJUSTE</span>' : ''}${e.auto ? ' <span style="font-size:11px;font-weight:700;color:#4ade80;">· AUTO</span>' : ''}</div>
                 ${e.desc ? `<div class="expense-desc-text">📝 ${e.desc}</div>` : ''}
                 <div class="income-item-date">${formatIncomeDate(e.date)}</div>
               </div>
-              ${e.adjust ? '' : `<button class="income-edit" onclick="openEditExpenseOrCapital('capital','${monthKey}', ${entries.indexOf(e)})">✏️</button>`}
+              ${(e.adjust || e.auto) ? '' : `<button class="income-edit" onclick="openEditExpenseOrCapital('capital','${monthKey}', ${entries.indexOf(e)})">✏️</button>`}
               <button class="income-del" onclick="deleteCapital('${monthKey}', ${entries.indexOf(e)})">✕</button>
             </div>`).join('')}
         </div>`}
@@ -6967,6 +7068,13 @@ function saveAdjustCapital() {
 
 function deleteCapital(key, index) {
   if (!capitalData[key] || index < 0) return;
+  const _e = capitalData[key][index];
+  if (_e && _e.auto && _e.date) {
+    // Quitar un aporte automático = excluir ese día (si no, se volvería a crear solo)
+    distribState.autoSkip = distribState.autoSkip || {};
+    distribState.autoSkip[_e.date] = true;
+    distribState.at = Date.now();
+  }
   capitalData[key].splice(index, 1);
   if (!capitalData[key].length) delete capitalData[key];
   saveToStorage();
