@@ -6219,11 +6219,13 @@ function renderIncomeSection(closeKeyboard) {
       <div class="income-input-row">
         <span class="income-currency">$</span>
         <input class="income-input" id="incomeAmount" type="text" inputmode="numeric"
-          placeholder="0" oninput="formatIncomeInput(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();addIncome(true);}">
+          autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="done"
+          placeholder="0" oninput="formatIncomeInput(this)" onkeydown="incomeEnter(event)">
       </div>
       <input class="expense-desc-input" id="incomeDesc" type="text"
+        autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="done"
         placeholder="📝 Descripción (opcional)"
-        onkeydown="if(event.key==='Enter'){event.preventDefault();addIncome(true);}">
+        onkeydown="incomeEnter(event)">
       <button class="income-add-btn" onclick="addIncome()">＋ Agregar venta</button>
     </div>
 
@@ -6296,7 +6298,16 @@ function formatIncomeInput(input) {
   input.setSelectionRange(newPos, newPos);
 }
 
+// Enter del teclado del celular: algunos teclados lo mandan como keyCode 13 / "Enter" aunque haya
+// una sugerencia de texto a medias, así que se acepta cualquiera de los dos.
+function incomeEnter(e) {
+  if (e.key === 'Enter' || e.keyCode === 13) { e.preventDefault(); addIncome(true); }
+}
+let _lastIncomeAddAt = 0;
+
 function addIncome(closeKeyboard) {
+  // Evita registrar la misma venta dos veces por un doble toque / doble Enter
+  if (Date.now() - _lastIncomeAddAt < 700) return;
   const input = document.getElementById('incomeAmount');
   const descInput = document.getElementById('incomeDesc');
   if (!input) return;
@@ -6313,6 +6324,7 @@ function addIncome(closeKeyboard) {
   const viewedISO = getViewedISO();
   const key = viewedISO.slice(0,7); // YYYY-MM
   if (!incomeData[key]) incomeData[key] = [];
+  _lastIncomeAddAt = Date.now();
   incomeData[key].push({
     amount,
     date: viewedISO,
@@ -9795,6 +9807,30 @@ function refreshSyncStatusPill() {
 window.addEventListener('online', refreshSyncStatusPill);
 window.addEventListener('offline', refreshSyncStatusPill);
 setInterval(refreshSyncStatusPill, 3000);
+
+// Sin sugerencias del teclado/autocompletado en los campos de texto y monto (la barra
+// blanca con valores anteriores se cruzaba al presionar Enter y a veces no registraba la venta).
+function hardenInputs(root) {
+  try {
+    (root || document).querySelectorAll('input:not([data-h])').forEach(el => {
+      el.setAttribute('data-h', '1');
+      const t = (el.getAttribute('type') || 'text').toLowerCase();
+      if (['text', 'search', 'tel', 'number', 'email', 'url'].indexOf(t) === -1) return;
+      if (el.hasAttribute('data-allow-autocomplete')) return;
+      el.setAttribute('autocomplete', 'off');
+      el.setAttribute('autocorrect', 'off');
+      el.setAttribute('spellcheck', 'false');
+    });
+  } catch (e) {}
+}
+(function () {
+  let pending = false;
+  function schedule() { if (pending) return; pending = true; requestAnimationFrame(() => { pending = false; hardenInputs(); }); }
+  try {
+    new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+  } catch (e) {}
+  hardenInputs();
+})();
 
 // ---- Google Drive: empaquetar/desempaquetar TODAS las claves de v152 ----
 function packAllDataForDrive() {
