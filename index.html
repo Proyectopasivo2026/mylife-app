@@ -5767,6 +5767,7 @@ let _distribSaveTimer = null;
 // (hoy 10% + 11%) se suman SOLOS al capital de trabajo, como un aporte "AUTO".
 // Solo cuenta desde esta fecha en adelante (no toca las ventas anteriores).
 const DISTRIB_AUTO_SINCE = '2026-11-19';
+const CAPITAL_EXPENSE_FROM = '2026-11'; // gastos SPA se descuentan acumulados desde este mes
 
 function autoCapitalPct() {
   return distribState.items
@@ -5951,6 +5952,78 @@ function distribCardHtml(base, label) {
 
 // ───────── Remanente total disponible (acumulable, histórico de todos los meses) ─────────
 let remanenteData = {}; // { 'YYYY-MM': [ { amount (+ suma / - descuento), date, ts, desc } ] }
+
+// ───────── IVA de ventas mensual (solo lectura) ─────────
+const IVA_RATE = 0.19;
+const IVA_SINCE = '2026-11-19'; // día en que se activó la distribución de ventas
+
+function ivaCardHtml(viewedISO) {
+  const MONTHS = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const DOW = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+  const [vy, vm] = viewedISO.split('-').map(Number);
+  const mk = `${vy}-${String(vm).padStart(2,'0')}`;
+  const daysOf = (key) => {
+    const m = {};
+    (Array.isArray(incomeData[key]) ? incomeData[key] : []).forEach(e => {
+      if (e && e.date && e.date >= IVA_SINCE) (m[e.date] = m[e.date] || []).push(e);
+    });
+    return m;
+  };
+  const sumDay = (arr) => arr.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+  const days = daysOf(mk);
+  const dates = Object.keys(days).sort().reverse();
+  let ventasMes = 0, ivaMes = 0;
+  dates.forEach(d => { const t = sumDay(days[d]); ventasMes += t; ivaMes += Math.round(t * IVA_RATE); });
+  // Acumulado de todos los meses desde que se empezó a contabilizar
+  let ventasTodo = 0, ivaTodo = 0;
+  Object.keys(incomeData).forEach(k => {
+    const dd = daysOf(k);
+    Object.keys(dd).forEach(d => { const t = sumDay(dd[d]); ventasTodo += t; ivaTodo += Math.round(t * IVA_RATE); });
+  });
+  const fmt = (n) => '$' + Math.round(n).toLocaleString('es-CL');
+  const rows = dates.map(d => {
+    const arr = days[d]; const t = sumDay(arr);
+    const dt = new Date(d + 'T00:00:00');
+    return `
+      <details style="border-top:1px solid rgba(255,255,255,0.07);padding:8px 0;">
+        <summary style="cursor:pointer;display:flex;gap:8px;align-items:center;list-style:none;">
+          <span style="flex:1;font-size:13px;font-weight:700;">${DOW[dt.getDay()]} ${formatIncomeDate(d)}</span>
+          <span style="font-size:12px;color:var(--text2);">${fmt(t)}</span>
+          <span style="min-width:74px;text-align:right;font-size:13px;font-weight:800;color:#38bdf8;font-family:'JetBrains Mono',monospace;">${fmt(Math.round(t * IVA_RATE))}</span>
+        </summary>
+        <div style="margin:6px 0 2px 8px;">
+          ${[...arr].sort((a, b) => (a.ts || 0) - (b.ts || 0)).map(e => `
+            <div style="display:flex;gap:8px;font-size:12px;color:var(--text3);padding:2px 0;">
+              <span style="flex:1;min-width:0;">${e.desc ? escTxt(e.desc) : (e.source ? sourceLabel(e.source) : 'Venta')}</span>
+              <span>${fmt(e.amount)}</span>
+              <span style="min-width:60px;text-align:right;color:#38bdf8;">${fmt((parseFloat(e.amount) || 0) * IVA_RATE)}</span>
+            </div>`).join('')}
+        </div>
+      </details>`;
+  }).join('');
+  const note = mk < IVA_SINCE.slice(0, 7)
+    ? `El IVA se contabiliza desde el ${formatIncomeDate(IVA_SINCE)}.`
+    : (dates.length === 0 ? `Aún no hay ventas en ${MONTHS[vm-1]} desde el ${formatIncomeDate(IVA_SINCE)}.` : '');
+  return `
+    <div class="income-add-box" style="margin-top:14px;">
+      <div style="font-size:13px;font-weight:800;color:#38bdf8;letter-spacing:1px;text-transform:uppercase;text-align:center;">🧾 IVA de ventas mensual</div>
+      <div style="font-size:38px;font-weight:900;color:#38bdf8;text-align:center;line-height:1.15;margin:6px 0 2px;">${fmt(ivaMes)}</div>
+      <div style="font-size:11px;color:var(--text3);text-align:center;margin-bottom:12px;">IVA ${Math.round(IVA_RATE * 100)}% acumulado en ${MONTHS[vm-1]} · desde el ${formatIncomeDate(IVA_SINCE)}</div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-top:1px solid rgba(255,255,255,0.1);">
+        <span style="color:var(--text3);">Ventas totales de ${MONTHS[vm-1]}</span><strong>${fmt(ventasMes)}</strong>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;">
+        <span style="color:var(--text3);">IVA (${Math.round(IVA_RATE * 100)}%)</span><strong style="color:#38bdf8;">${fmt(ivaMes)}</strong>
+      </div>
+      ${ivaTodo !== ivaMes ? `<div style="display:flex;justify-content:space-between;font-size:12px;padding:6px 0;border-top:1px solid rgba(255,255,255,0.1);color:var(--text3);"><span>Acumulado total (todos los meses)</span><span>${fmt(ventasTodo)} → <strong style="color:#38bdf8;">${fmt(ivaTodo)}</strong></span></div>` : ''}
+      ${note ? `<div class="income-empty" style="padding:8px 0;">${note}</div>` : `
+      <div style="display:flex;font-size:10px;font-weight:700;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin:12px 0 4px;">
+        <span style="flex:1;">Día</span><span style="margin-right:8px;">Ventas</span><span style="min-width:74px;text-align:right;">IVA</span>
+      </div>
+      ${rows}`}
+      <div style="font-size:11px;color:var(--text3);margin-top:10px;line-height:1.4;">Se calcula solo (19% de las ventas totales de todos los vendedores) y no se puede modificar. Toca un día para ver cada venta.</div>
+    </div>`;
+}
 
 function remanenteTotal() {
   return Object.values(remanenteData).reduce(
@@ -6214,6 +6287,8 @@ function renderIncomeSection(closeKeyboard) {
       </div>` : ''}
 
     ${distribCardHtml(dayTotal, isToday ? 'de hoy' : 'de ese día')}
+
+    ${ivaCardHtml(viewedISO)}
 
     ${remanenteCardHtml(viewedISO)}
   `;
@@ -6855,7 +6930,17 @@ function renderCapitalSection(closeKeyboard) {
   // de meses anteriores o posteriores.
   const totalCapitalHistorico = Object.values(capitalData).reduce(
     (s, arr) => s + arr.reduce((s2,e) => s2 + (parseFloat(e.amount)||0), 0), 0);
-  const capitalDisponible = totalCapitalHistorico - expenseMonthTotal;
+  // Los gastos SPA se descuentan de forma ACUMULADA desde noviembre 2026: lo que se
+  // gasta en un mes sigue restando en los meses siguientes (el capital no "se recupera"
+  // al cambiar de mes). Meses anteriores a esa fecha conservan el cálculo antiguo.
+  let gastosDescontados = expenseMonthTotal;
+  if (monthKey >= CAPITAL_EXPENSE_FROM) {
+    gastosDescontados = Object.keys(expenseData)
+      .filter(k => k >= CAPITAL_EXPENSE_FROM && k <= monthKey)
+      .reduce((s, k) => s + (Array.isArray(expenseData[k]) ? expenseData[k] : []).reduce((s2, e) => s2 + (parseFloat(e.amount) || 0), 0), 0);
+  }
+  const gastosPrevios = gastosDescontados - expenseMonthTotal;
+  const capitalDisponible = totalCapitalHistorico - gastosDescontados;
 
   container.innerHTML = `
     <div class="income-hero">
@@ -6876,7 +6961,7 @@ function renderCapitalSection(closeKeyboard) {
           ${capMoney(capitalDisponible)}
         </div>
         <div style="font-size:11px;color:var(--text3);margin-top:4px;">
-          Capital ingresado (desde siempre) menos gastos SPA de ${MONTHS[vm-1]}
+          Capital ingresado (desde siempre) menos gastos SPA${gastosPrevios > 0 ? ' acumulados desde noviembre 2026' : ' de ' + MONTHS[vm-1]}
         </div>
         <button onclick="openAdjustCapital(${capitalDisponible})"
           style="margin-top:12px;background:rgba(74,222,128,0.12);border:1px solid rgba(74,222,128,0.45);color:#4ade80;font-weight:700;font-size:13px;padding:9px 18px;border-radius:999px;cursor:pointer;font-family:inherit;">
@@ -6899,6 +6984,11 @@ function renderCapitalSection(closeKeyboard) {
           <span>Gastos SPA de ${MONTHS[vm-1]}:</span>
           <span style="font-weight:700;color:#f87171;">-$${expenseMonthTotal.toLocaleString('es-CL')}</span>
         </div>
+        ${gastosPrevios > 0 ? `
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text3);">
+          <span>Gastos SPA de meses anteriores (desde nov-2026):</span>
+          <span style="font-weight:700;color:#f87171;">-$${gastosPrevios.toLocaleString('es-CL')}</span>
+        </div>` : ''}
       </div>
     </div>
 
