@@ -6015,13 +6015,8 @@ function ivaCardHtml(viewedISO) {
       <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;">
         <span style="color:var(--text3);">IVA (${Math.round(IVA_RATE * 100)}%)</span><strong style="color:#38bdf8;">${fmt(ivaMes)}</strong>
       </div>
-      ${ivaTodo !== ivaMes ? `<div style="display:flex;justify-content:space-between;font-size:12px;padding:6px 0;border-top:1px solid rgba(255,255,255,0.1);color:var(--text3);"><span>Acumulado total (todos los meses)</span><span>${fmt(ventasTodo)} → <strong style="color:#38bdf8;">${fmt(ivaTodo)}</strong></span></div>` : ''}
-      ${note ? `<div class="income-empty" style="padding:8px 0;">${note}</div>` : `
-      <div style="display:flex;font-size:10px;font-weight:700;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin:12px 0 4px;">
-        <span style="flex:1;">Día</span><span style="margin-right:8px;">Ventas</span><span style="min-width:74px;text-align:right;">IVA</span>
-      </div>
-      ${rows}`}
-      <div style="font-size:11px;color:var(--text3);margin-top:10px;line-height:1.4;">Se calcula solo (19% de las ventas totales de todos los vendedores) y no se puede modificar. Toca un día para ver cada venta.</div>
+      ${note ? `<div class="income-empty" style="padding:8px 0;">${note}</div>` : ''}
+      <div style="font-size:11px;color:var(--text3);margin-top:10px;line-height:1.4;">Se calcula solo (19% de las ventas totales de todos los vendedores) y no se puede modificar.</div>
     </div>`;
 }
 
@@ -6258,33 +6253,6 @@ function renderIncomeSection(closeKeyboard) {
             </div>`).join('')}
         </div>`}
 
-    ${sorted.length > dayEntries.length ? `
-      <div style="margin-top:16px;">
-        <button class="month-toggle-btn" onclick="toggleMonthSales()">
-          <span id="monthSalesIcon">▾</span> Ver todas las ventas de ${MONTHS[vm-1]} (${sorted.length})
-        </button>
-        <div id="monthSalesList" style="display:none;margin-top:10px;">
-          <div class="income-list">
-            ${sorted.map((e) => `
-              <div class="income-item ${e.date === viewedISO ? 'income-item-highlight' : ''}">
-                <div style="flex:1;min-width:0;">
-                  <div class="income-item-amount">$${(parseFloat(e.amount)||0).toLocaleString('es-CL')}</div>
-                  ${e.desc ? `<div class="expense-desc-text">📝 ${e.desc}</div>` : ''}
-                  <div class="income-item-date">
-                    ${formatIncomeDate(e.date)}${e.migrated ? ' · importado' : ''}
-                    ${e.source ? `<span class="income-src-badge ${e.source}">${sourceLabel(e.source)}</span>` : ''}
-                    ${getCampaignName(e.campaignId) ? `<span class="campaign-badge">🎯 ${getCampaignName(e.campaignId)}</span>` : ''}
-                  ${getSellerName(e.sellerId) ? `<span class="seller-badge">👤 ${getSellerName(e.sellerId)}</span>` : ''}
-                  </div>
-                </div>
-                <div style="display:flex;align-items:center;gap:2px;flex-shrink:0;">
-                  <button class="income-edit" onclick="openEditIncome('${monthKey}', ${allEntries.indexOf(e)})">✏️</button>
-                  <button class="income-del" onclick="deleteIncome('${monthKey}', ${allEntries.indexOf(e)})">✕</button>
-                </div>
-              </div>`).join('')}
-          </div>
-        </div>
-      </div>` : ''}
 
     ${distribCardHtml(dayTotal, isToday ? 'de hoy' : 'de ese día')}
 
