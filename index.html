@@ -5957,6 +5957,68 @@ let remanenteData = {}; // { 'YYYY-MM': [ { amount (+ suma / - descuento), date,
 const IVA_RATE = 0.19;
 const IVA_SINCE = '2026-11-19'; // día en que se activó la distribución de ventas
 
+
+// ───────── Capital disponible (mismo cálculo de la pantalla Capital de Trabajo) ─────────
+function capitalDisponibleFor(monthKey) {
+  const totalCap = Object.values(capitalData).reduce(
+    (s, arr) => s + (Array.isArray(arr) ? arr : []).reduce((s2, e) => s2 + (parseFloat(e.amount) || 0), 0), 0);
+  const sumExp = (k) => (Array.isArray(expenseData[k]) ? expenseData[k] : []).reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+  let gastos = sumExp(monthKey);
+  if (monthKey >= CAPITAL_EXPENSE_FROM) {
+    gastos = Object.keys(expenseData).filter(k => k >= CAPITAL_EXPENSE_FROM && k <= monthKey).reduce((s, k) => s + sumExp(k), 0);
+  }
+  return totalCap - gastos;
+}
+function ivaMesFor(monthKey) {
+  let iva = 0;
+  (Array.isArray(incomeData[monthKey]) ? incomeData[monthKey] : []).forEach(e => {
+    if (e && e.date && e.date >= IVA_SINCE) iva += Math.round((parseFloat(e.amount) || 0) * IVA_RATE);
+  });
+  return iva;
+}
+// Se agrupa por día igual que la tarjeta de IVA (redondeo por día) para que ambos números coincidan
+function ivaMesPorDia(monthKey) {
+  const m = {};
+  (Array.isArray(incomeData[monthKey]) ? incomeData[monthKey] : []).forEach(e => {
+    if (e && e.date && e.date >= IVA_SINCE) m[e.date] = (m[e.date] || 0) + (parseFloat(e.amount) || 0);
+  });
+  return Object.values(m).reduce((s, t) => s + Math.round(t * IVA_RATE), 0);
+}
+
+function totalesCardHtml(viewedISO) {
+  const MONTHS = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const [vy, vm] = viewedISO.split('-').map(Number);
+  const mk = `${vy}-${String(vm).padStart(2,'0')}`;
+  const iva = ivaMesPorDia(mk), cap = capitalDisponibleFor(mk), rem = remanenteTotal();
+  const total = iva + cap + rem;
+  return `
+    <div class="income-add-box" style="margin-top:14px;border:1px solid rgba(255,255,255,0.18);">
+      <div style="font-size:13px;font-weight:800;color:#fff;letter-spacing:1px;text-transform:uppercase;text-align:center;">🏧 Total IVA + Capital + Remanente</div>
+      <div style="font-size:42px;font-weight:900;color:#fff;text-align:center;line-height:1.15;margin:6px 0 2px;">${capMoney(total)}</div>
+      <div style="font-size:11px;color:var(--text3);text-align:center;margin-bottom:10px;">Para cuadrar con la cuenta del banco · ${MONTHS[vm-1]}</div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-top:1px solid rgba(255,255,255,0.1);">
+        <span style="color:var(--text3);">🧾 IVA</span><strong style="color:#38bdf8;">${capMoney(iva)}</strong>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;">
+        <span style="color:var(--text3);">💚 Capital de trabajo</span><strong style="color:#4ade80;">${capMoney(cap)}</strong>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;">
+        <span style="color:var(--text3);">💎 Remanente total</span><strong style="color:#facc15;">${capMoney(rem)}</strong>
+      </div>
+    </div>`;
+}
+
+function capitalResumenCardHtml(viewedISO) {
+  const [vy, vm] = viewedISO.split('-').map(Number);
+  const cap = capitalDisponibleFor(`${vy}-${String(vm).padStart(2,'0')}`);
+  return `
+    <div class="income-add-box" style="margin-top:14px;">
+      <div style="font-size:13px;font-weight:800;color:#4ade80;letter-spacing:1px;text-transform:uppercase;text-align:center;">💚 Capital de trabajo disponible</div>
+      <div style="font-size:38px;font-weight:900;color:${cap < 0 ? '#f87171' : '#4ade80'};text-align:center;line-height:1.15;margin:6px 0 2px;">${capMoney(cap)}</div>
+      <div style="font-size:11px;color:var(--text3);text-align:center;">Solo lectura · se modifica desde la sección Capital de Trabajo</div>
+    </div>`;
+}
+
 function ivaCardHtml(viewedISO) {
   const MONTHS = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
   const DOW = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
@@ -6258,7 +6320,11 @@ function renderIncomeSection(closeKeyboard) {
 
     ${distribCardHtml(dayTotal, isToday ? 'de hoy' : 'de ese día')}
 
+    ${totalesCardHtml(viewedISO)}
+
     ${ivaCardHtml(viewedISO)}
+
+    ${capitalResumenCardHtml(viewedISO)}
 
     ${remanenteCardHtml(viewedISO)}
   `;
